@@ -2,10 +2,12 @@
 //! Rust DSP in `crate::dsp`.
 
 use crate::audio::AudioData;
+use crate::dsp::beat_track;
 use crate::dsp::chroma::{chroma_filterbank, chroma_stft};
 use crate::dsp::mel::{mel_filterbank, melspectrogram};
-use crate::dsp::onset::{detect_beats, onset_strength};
+use crate::dsp::onset::onset_strength;
 use crate::dsp::stft::{power_from_stft, stft_centered};
+use crate::dsp::tempo;
 use crate::dsp::weighting::{fft_frequencies, perceptual_weighting_a};
 use crate::dsp::window::hann_periodic;
 use crate::dsp::zero_cross::nearest_zero_crossing;
@@ -81,8 +83,10 @@ pub fn find_loop_pairs(audio: &AudioData, params: &Params) -> Vec<LoopPairRespon
     let has_approx = params.approx_loop_start.is_some()
         && params.approx_loop_end.is_some();
 
-    // ---- beats ----
+    // ---- beats + bpm ----
+    let bpm: f32;
     let beats: Vec<usize> = if has_approx {
+        bpm = 120.0;
         // Approximate loop position: search a +/-2s window around each of the
         // approximate start/end (converted to frames, accounting for trim).
         let seconds_to_frames = |sec: f64| {
@@ -108,10 +112,12 @@ pub fn find_loop_pairs(audio: &AudioData, params: &Params) -> Vec<LoopPairRespon
         v.dedup();
         v
     } else if params.brute_force {
+        bpm = 120.0;
         (0..n_frames).collect()
     } else {
         let env = onset_strength(&mel_spec, N_MELS, n_frames);
-        detect_beats(&env, rate as f32, HOP_LENGTH)
+        bpm = tempo::estimate_tempo(&env, rate as f32, HOP_LENGTH);
+        beat_track::beat_track(&env, rate as f32, HOP_LENGTH, bpm)
     };
 
     // ---- duration constraints (in frames) ----
@@ -156,7 +162,6 @@ pub fn find_loop_pairs(audio: &AudioData, params: &Params) -> Vec<LoopPairRespon
     }
 
     // ---- score + prune ----
-    let bpm = 120.0f32;
     let beats_per_second = bpm / 60.0;
     let seconds_to_test = NUM_TEST_BEATS as f32 / beats_per_second;
     let mut test_offset = (seconds_to_test * rate as f32 / HOP_LENGTH as f32) as usize;
