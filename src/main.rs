@@ -36,6 +36,10 @@ struct Cli {
     /// Return all candidate loop points without filtering.
     #[arg(long)]
     disable_pruning: bool,
+
+    /// Emit intermediate diagnostics (bpm, beat count, onset stats) on stderr.
+    #[arg(long)]
+    debug: bool,
 }
 
 fn main() -> Result<()> {
@@ -49,6 +53,7 @@ fn main() -> Result<()> {
         approx_loop_end: cli.approx_loop_end,
         brute_force: cli.brute_force,
         disable_pruning: cli.disable_pruning,
+        debug: cli.debug,
     };
 
     let output = detect_loop_points(&cli.path, &params)?;

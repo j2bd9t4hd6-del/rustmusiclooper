@@ -40,6 +40,7 @@ pub struct Params {
     pub approx_loop_end: Option<f32>,
     pub brute_force: bool,
     pub disable_pruning: bool,
+    pub debug: bool,
 }
 
 impl Default for Params {
@@ -52,6 +53,7 @@ impl Default for Params {
             approx_loop_end: None,
             brute_force: false,
             disable_pruning: false,
+            debug: false,
         }
     }
 }
@@ -117,7 +119,21 @@ pub fn find_loop_pairs(audio: &AudioData, params: &Params) -> Vec<LoopPairRespon
     } else {
         let env = onset_strength(&mel_spec, N_MELS, n_frames);
         bpm = tempo::estimate_tempo(&env, rate as f32, HOP_LENGTH);
-        beat_track::beat_track(&env, rate as f32, HOP_LENGTH, bpm)
+        let beats = beat_track::beat_track(&env, rate as f32, HOP_LENGTH, bpm);
+        if params.debug {
+            let n = env.len() as f64;
+            let mean = env.iter().map(|&v| v as f64).sum::<f64>() / n;
+            let std = (env.iter().map(|&v| {
+                let d = v as f64 - mean;
+                d * d
+            }).sum::<f64>() / n).sqrt();
+            let max = env.iter().cloned().fold(0.0f32, f32::max);
+            eprintln!(
+                "debug: bpm={:.1} beats={} onset: mean={:.4} std={:.4} max={:.4}",
+                bpm, beats.len(), mean, std, max
+            );
+        }
+        beats
     };
 
     // ---- duration constraints (in frames) ----
@@ -156,6 +172,9 @@ pub fn find_loop_pairs(audio: &AudioData, params: &Params) -> Vec<LoopPairRespon
 
     // ---- candidate pairs ----
     let candidates = find_candidate_pairs(&chroma, &s_weighted, n_frames, n_bins, &beats, min_loop_duration, max_loop_duration);
+    if params.debug {
+        eprintln!("debug: candidates (pre-prune) = {}", candidates.len());
+    }
 
     if candidates.is_empty() {
         return vec![];
@@ -171,7 +190,11 @@ pub fn find_loop_pairs(audio: &AudioData, params: &Params) -> Vec<LoopPairRespon
     let weights = geomspace(test_offset, 2.max(test_offset / NUM_TEST_BEATS), 1);
 
     let candidates = if candidates.len() >= 100 && !params.disable_pruning {
-        prune_candidates(&candidates)
+        let pruned = prune_candidates(&candidates);
+        if params.debug {
+            eprintln!("debug: candidates (post-prune) = {}", pruned.len());
+        }
+        pruned
     } else {
         candidates
     };

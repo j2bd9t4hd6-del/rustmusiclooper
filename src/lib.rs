@@ -94,6 +94,7 @@ pub extern "C" fn rustmusiclooper_analyze(
                 approx_loop_end: (approx_loop_end > 0.0).then_some(approx_loop_end),
                 brute_force: brute_force != 0,
                 disable_pruning: disable_pruning != 0,
+                debug: false,
             };
             detect_loop_points_from_bytes(bytes, &params)
         }
