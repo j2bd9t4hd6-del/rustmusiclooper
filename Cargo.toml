@@ -5,15 +5,19 @@ edition = "2024"
 description = "PyMusicLooper loop point detection re-implemented in Rust"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
-symphonia = { version = "0.6", features = ["aac", "isomp4"] }
+symphonia = { version = "0.6", default-features = false, features = ["aac", "isomp4", "pcm"] }
 symphonia-format-isomp4 = "0.6"
 symphonia-codec-aac = "0.6"
+symphonia-codec-pcm = "0.6"
 rustfft = "6"
-ndarray = "0.16"
+
+[features]
+default = ["cli"]
+cli = ["dep:clap"]
 
 [lib]
 name = "rustmusiclooper"
@@ -22,3 +26,4 @@ path = "src/lib.rs"
 [[bin]]
 name = "rustmusiclooper"
 path = "src/main.rs"
+required-features = ["cli"]
