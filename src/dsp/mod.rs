@@ -1,3 +1,4 @@
+pub mod beat_track;
 pub mod chroma;
 pub mod mel;
 pub mod onset;
