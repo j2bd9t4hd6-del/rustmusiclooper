@@ -16,7 +16,7 @@
 //! then cast to f32 when adding to the (f32) power_to_db result.
 //! The DC bin (f=0) makes log10(f_sq) -> -inf; the offset saturates to min_db.
 
-use crate::dsp::power_db::power_to_db_ref_median;
+use crate::dsp::power_db::power_to_db_ref_peak;
 
 /// FFT bin center frequencies: `np.fft.rfftfreq(n_fft, d=1/sr)`.
 pub fn fft_frequencies(sr: f64, n_fft: usize) -> Vec<f64> {
@@ -65,13 +65,16 @@ pub fn a_weighting(freqs: &[f64]) -> Vec<f64> {
         .collect()
 }
 
-/// Apply perceptual A-weighting + power_to_db(ref=median) in place.
+/// Apply perceptual A-weighting + power_to_db(ref=1.0/peak) in place.
+///
+/// Mirrors PyMusicLooper:
+///     S_weighed = librosa.perceptual_weighting(S=S_power, frequencies=...)
+/// with no `ref` argument (so `power_to_db` uses its default `ref=1.0`).
 /// `power` must be `[n_fft/2+1][n_frames]` row-major.
-pub fn perceptual_weighting_a(power: &mut [f32], n_bins: usize, freqs: &[f64]) {
+pub fn perceptual_weighting_peak(power: &mut [f32], n_bins: usize, freqs: &[f64]) {
     let offset = a_weighting(freqs);
-    // First compute power_to_db with the unweighted matrix's median.
-    power_to_db_ref_median(power);
-    // Add the per-frequency offset.
+    // Convert to dB with peak reference (ref=1.0), then add the A-weighting offset.
+    power_to_db_ref_peak(power);
     for t in 0..power.len() / n_bins {
         for f in 0..n_bins {
             power[t * n_bins + f] += offset[f] as f32;

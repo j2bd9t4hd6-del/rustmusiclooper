@@ -9,7 +9,8 @@ use crate::dsp::onset::onset_strength;
 use crate::dsp::plp;
 use crate::dsp::stft::{power_from_stft, stft_centered};
 use crate::dsp::tempo;
-use crate::dsp::weighting::{fft_frequencies, perceptual_weighting_a};
+use crate::dsp::power_db::power_to_db_ref_median;
+use crate::dsp::weighting::{fft_frequencies, perceptual_weighting_peak};
 use crate::dsp::window::hann_periodic;
 use crate::dsp::zero_cross::nearest_zero_crossing;
 use crate::model::LoopPairResponse;
@@ -74,14 +75,21 @@ pub fn find_loop_pairs(audio: &AudioData, params: &Params) -> Vec<LoopPairRespon
     let chroma_fb = chroma_filterbank(rate as f64, N_FFT, TUNING, N_CHROMA);
     let chroma = chroma_stft(&s_power, n_bins, n_frames, &chroma_fb, N_CHROMA);
 
-    // ---- perceptual-weighted power -> power_db ----
+    // ---- perceptual-weighted power (S_weighed): ref=peak + A-weighting ----
+    // PyMusicLooper: S_weighed = perceptual_weighting(S=S_power, ...) (no ref -> peak)
     let freqs = fft_frequencies(rate as f64, N_FFT);
     let mut s_weighted = s_power.clone();
-    perceptual_weighting_a(&mut s_weighted, n_bins, &freqs);
+    perceptual_weighting_peak(&mut s_weighted, n_bins, &freqs);
 
-    // ---- mel spectrogram (for onset) ----
+    // ---- mel spectrogram (for onset): input = S_weighed (dB domain) ----
+    // PyMusicLooper: melspectrogram(S=S_weighed, sr, n_mels=128, fmax=8000)
     let mel_fb = mel_filterbank(rate as f64, N_FFT, N_MELS, 0.0, 8000.0);
-    let mel_spec = melspectrogram(&s_power, n_bins, n_frames, &mel_fb, N_MELS);
+    let mel_spec = melspectrogram(&s_weighted, n_bins, n_frames, &mel_fb, N_MELS);
+
+    // ---- power_db: S_weighed re-converted to dB with ref=median ----
+    // PyMusicLooper: power_db = power_to_db(S_weighed, ref=np.median)
+    let mut power_db = s_weighted.clone();
+    power_to_db_ref_median(&mut power_db);
 
     let has_approx = params.approx_loop_start.is_some()
         && params.approx_loop_end.is_some();
@@ -182,7 +190,7 @@ pub fn find_loop_pairs(audio: &AudioData, params: &Params) -> Vec<LoopPairRespon
     };
 
     // ---- candidate pairs ----
-    let candidates = find_candidate_pairs(&chroma, &s_weighted, n_frames, n_bins, &beats, min_loop_duration, max_loop_duration, params.debug);
+    let candidates = find_candidate_pairs(&chroma, &power_db, n_frames, n_bins, &beats, min_loop_duration, max_loop_duration, params.debug);
     if params.debug {
         eprintln!("debug: candidates (pre-prune) = {}", candidates.len());
     }
