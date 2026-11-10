@@ -2,6 +2,7 @@ pub mod beat_track;
 pub mod chroma;
 pub mod mel;
 pub mod onset;
+pub mod plp;
 pub mod power_db;
 pub mod stft;
 pub mod tempo;

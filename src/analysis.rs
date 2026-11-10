@@ -6,6 +6,7 @@ use crate::dsp::beat_track;
 use crate::dsp::chroma::{chroma_filterbank, chroma_stft};
 use crate::dsp::mel::{mel_filterbank, melspectrogram};
 use crate::dsp::onset::onset_strength;
+use crate::dsp::plp;
 use crate::dsp::stft::{power_from_stft, stft_centered};
 use crate::dsp::tempo;
 use crate::dsp::weighting::{fft_frequencies, perceptual_weighting_a};
@@ -119,7 +120,17 @@ pub fn find_loop_pairs(audio: &AudioData, params: &Params) -> Vec<LoopPairRespon
     } else {
         let env = onset_strength(&mel_spec, N_MELS, n_frames);
         bpm = tempo::estimate_tempo(&env, rate as f32, HOP_LENGTH);
-        let beats = beat_track::beat_track(&env, rate as f32, HOP_LENGTH, bpm);
+        let beats_dp = beat_track::beat_track(&env, rate as f32, HOP_LENGTH, bpm);
+        let n_dp = beats_dp.len();
+        // PLP: local maxima of the predominant local pulse (librosa.beat.plp).
+        let pulse = plp::plp(&env, rate as f32, HOP_LENGTH);
+        let beats_plp = plp::localmax(&pulse);
+        // Union of beat_track and PLP beats (matching PyMusicLooper's
+        // np.union1d(beats, beats_plp)), sorted and deduplicated.
+        let mut beats: Vec<usize> = beats_dp;
+        beats.extend_from_slice(&beats_plp);
+        beats.sort_unstable();
+        beats.dedup();
         if params.debug {
             let n = env.len() as f64;
             let mean = env.iter().map(|&v| v as f64).sum::<f64>() / n;
@@ -129,8 +140,8 @@ pub fn find_loop_pairs(audio: &AudioData, params: &Params) -> Vec<LoopPairRespon
             }).sum::<f64>() / n).sqrt();
             let max = env.iter().cloned().fold(0.0f32, f32::max);
             eprintln!(
-                "debug: bpm={:.1} beats={} onset: mean={:.4} std={:.4} max={:.4}",
-                bpm, beats.len(), mean, std, max
+                "debug: bpm={:.1} beats_dp={} beats_plp={} beats_union={} onset: mean={:.4} std={:.4} max={:.4}",
+                bpm, n_dp, beats_plp.len(), beats.len(), mean, std, max
             );
         }
         beats
