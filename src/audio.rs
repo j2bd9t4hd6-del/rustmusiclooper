@@ -133,16 +133,61 @@ fn decode(bytes: &[u8]) -> Result<AudioData> {
     // Playback: original multi-channel, [samples][channels], unnormalized.
     let playback = raw;
 
-    // Trim leading/trailing silence below -40 dB (librosa.effects.trim top_db=40).
-    let threshold = 10f32.powf(-40.0 / 20.0);
-    let mut start = 0usize;
-    while start < total_samples && mono[start].abs() < threshold {
-        start += 1;
+    // Trim leading/trailing silence: 1:1 port of librosa.effects.trim(mono, top_db=40).
+    //   rms = feature.rms(y, frame_length=2048, hop_length=512, center=True)
+    //   db  = amplitude_to_db(rms, ref=np.max, top_db=None)   // 20*log10(rms/max(rms))
+    //   non_silent = db > -top_db
+    //   start = frames_to_samples(first_nonzero, hop=512) = first * 512
+    //   end   = min(n, frames_to_samples(last_nonzero + 1, hop=512))
+    const FRAME_LEN: usize = 2048;
+    const HOP: usize = 512;
+    const TOP_DB: f32 = 40.0;
+    const AMIN: f32 = 1e-5; // librosa amplitude_to_db default amin
+
+    // 1) center=True: zero-pad frame_length//2 = 1024 on each side (librosa rms padding).
+    let pad = FRAME_LEN / 2;
+    let mut padded = vec![0.0f32; total_samples + 2 * pad];
+    padded[pad..pad + total_samples].copy_from_slice(&mono);
+    let padded_len = padded.len();
+
+    // 2) util.frame(frame_length=2048, hop_length=512): n_frames = (L - 2048)/512 + 1.
+    //    Every frame is exactly 2048 samples (zero-padded at the edges).
+    let n_frames = (padded_len - FRAME_LEN) / HOP + 1;
+    let mut rms = vec![0.0f32; n_frames];
+    for t in 0..n_frames {
+        let start = t * HOP;
+        let mut acc = 0.0f64;
+        for i in 0..FRAME_LEN {
+            let v = padded[start + i] as f64;
+            acc += v * v;
+        }
+        rms[t] = (acc / FRAME_LEN as f64).sqrt() as f32; // mean(|x|^2) -> sqrt
     }
-    let mut end = total_samples;
-    while end > start && mono[end - 1].abs() < threshold {
-        end -= 1;
+
+    // 3) ref = max(rms) (amplitude_to_db ref=np.max).
+    let ref_val = rms.iter().cloned().fold(0.0f32, f32::max);
+
+    // 4) non_silent[t] = 20*log10(max(amin, rms)/max(amin, ref)) > -top_db.
+    let mut non_silent = vec![false; n_frames];
+    for t in 0..n_frames {
+        let db = if ref_val > 0.0 {
+            20.0f32 * (rms[t].max(AMIN) / ref_val.max(AMIN)).log10()
+        } else {
+            f32::NEG_INFINITY
+        };
+        non_silent[t] = db > -TOP_DB;
     }
+
+    // 5) start/end via frames_to_samples(frame, hop=512) = frame * 512.
+    let nonzero: Vec<usize> = (0..n_frames).filter(|&t| non_silent[t]).collect();
+    let (start, end) = if nonzero.is_empty() {
+        (0, 0)
+    } else {
+        (
+            nonzero[0] * HOP,
+            ((nonzero[nonzero.len() - 1] + 1) * HOP).min(total_samples),
+        )
+    };
     let trim_offset = start;
     let audio = mono[start..end].to_vec();
 

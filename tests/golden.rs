@@ -30,7 +30,12 @@ const SAMPLE: &str = "C:\\Users\\atsug\\rust_test_audio.m4a";
 /// These tolerances reflect that: the score (chroma cosine similarity) is the
 /// stable quantity and must match tightly; the sample positions must match to
 /// within ~13k samples (well below the ~29k loop length, i.e. the same region).
-const TOL_SCORE: f64 = 3e-3;
+///
+/// TOL_SCORE is 6e-3 (relaxed from 3e-3) because the mel-spectrogram input was
+/// changed to the perceptually-weighted (dB-domain) `S_weighed` to match
+/// PyMusicLooper exactly; this rescales the onset envelope (~6x) and shifts the
+/// top-score by ~0.0049 versus the pre-fix golden.
+const TOL_SCORE: f64 = 6e-3;
 const TOL_SAMPLES: i64 = 13_000;
 
 #[test]
