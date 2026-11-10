@@ -16,7 +16,7 @@ use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use std::fs::File;
+use std::io::Cursor;
 
 #[derive(Debug, Clone)]
 pub struct AudioData {
@@ -38,23 +38,32 @@ pub struct AudioData {
 
 /// Decode an audio file (m4a/mp4/aac, wav, etc.) via symphonia.
 pub fn load(path: &str) -> Result<AudioData> {
-    let file = File::open(path).map_err(|e| anyhow!("cannot open {}: {}", path, e))?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let bytes = std::fs::read(path).map_err(|e| anyhow!("cannot read {}: {}", path, e))?;
+    decode(&bytes)
+}
+
+/// Decode audio from an in-memory byte buffer (for iOS/Flutter).
+pub fn load_from_bytes(bytes: &[u8]) -> Result<AudioData> {
+    decode(bytes)
+}
+
+fn decode(bytes: &[u8]) -> Result<AudioData> {
+    let mss = MediaSourceStream::new(Box::new(Cursor::new(bytes.to_vec())), Default::default());
     let format: Box<dyn FormatReader> = symphonia::default::get_probe()
         .probe(&Hint::default(), mss, FormatOptions::default(), MetadataOptions::default())
-        .map_err(|e| anyhow!("probe failed for {}: {}", path, e))?;
+        .map_err(|e| anyhow!("probe failed: {}", e))?;
 
     let mut format = format;
     let track = format
         .default_track(TrackType::Audio)
-        .ok_or_else(|| anyhow!("no audio track in {}", path))?;
+        .ok_or_else(|| anyhow!("no audio track"))?;
     let cp = track
         .codec_params
         .as_ref()
-        .ok_or_else(|| anyhow!("track has no codec in {}", path))?;
+        .ok_or_else(|| anyhow!("track has no codec"))?;
     let audio_cp = match cp {
         symphonia::core::codecs::CodecParameters::Audio(a) => a,
-        _ => return Err(anyhow!("non-audio default track in {}", path)),
+        _ => return Err(anyhow!("non-audio default track")),
     };
     let rate = audio_cp.sample_rate.unwrap_or(48000) as usize;
     let n_channels = audio_cp
@@ -100,7 +109,7 @@ pub fn load(path: &str) -> Result<AudioData> {
 
     let total_samples = raw.len() / n_channels;
     if total_samples == 0 {
-        return Err(anyhow!("no audio samples decoded from {}", path));
+        return Err(anyhow!("no audio samples decoded"));
     }
 
     // Channel mean -> mono.
