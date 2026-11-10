@@ -18,7 +18,7 @@ pub const HOP_LENGTH: usize = 512;
 pub const N_MELS: usize = 128;
 pub const N_CHROMA: usize = 12;
 
-const ACCEPTABLE_NOTE_DEVIATION: f32 = 0.0875;
+const ACCEPTABLE_NOTE_DEVIATION: f32 = 0.15;
 const ACCEPTABLE_LOUDNESS_DIFFERENCE: f32 = 0.5;
 const NUM_TEST_BEATS: usize = 12;
 const TUNING: f32 = 0.0; // simplified: skip librosa's estimate_tuning
@@ -171,7 +171,7 @@ pub fn find_loop_pairs(audio: &AudioData, params: &Params) -> Vec<LoopPairRespon
     };
 
     // ---- candidate pairs ----
-    let candidates = find_candidate_pairs(&chroma, &s_weighted, n_frames, n_bins, &beats, min_loop_duration, max_loop_duration);
+    let candidates = find_candidate_pairs(&chroma, &s_weighted, n_frames, n_bins, &beats, min_loop_duration, max_loop_duration, params.debug);
     if params.debug {
         eprintln!("debug: candidates (pre-prune) = {}", candidates.len());
     }
@@ -261,6 +261,7 @@ fn find_candidate_pairs(
     beats: &[usize],
     min_loop_duration: usize,
     max_loop_duration: usize,
+    debug: bool,
 ) -> Vec<CandidatePair> {
     // deviation[idx] = norm(chroma_frame(beats[idx]) * ACCEPTABLE_NOTE_DEVIATION)
     let mut deviation = vec![0.0f32; beats.len()];
@@ -270,7 +271,12 @@ fn find_candidate_pairs(
     }
 
     let mut out = Vec::new();
+    let mut note_fail = 0usize;
+    let mut loud_fail = 0usize;
+    let mut max_note_dist = 0.0f32;
+    let mut min_deviation = f32::MAX;
     for (idx, &loop_end) in beats.iter().enumerate() {
+        min_deviation = min_deviation.min(deviation[idx]);
         for &loop_start in beats {
             let loop_length = loop_end as i64 - loop_start as i64;
             if loop_length < min_loop_duration as i64 {
@@ -284,6 +290,7 @@ fn find_candidate_pairs(
                 diff[c] = chroma[c * n_frames + loop_end] - chroma[c * n_frames + loop_start];
             }
             let note_distance = norm12(&diff);
+            max_note_dist = max_note_dist.max(note_distance);
             if note_distance <= deviation[idx] {
                 // loudness difference = |max(power_db[:,end]) - max(power_db[:,start])|
                 let mut mx_end = f32::MIN;
@@ -303,9 +310,20 @@ fn find_candidate_pairs(
                         loudness_difference,
                         score: 0.0,
                     });
+                } else {
+                    loud_fail += 1;
                 }
+            } else {
+                note_fail += 1;
             }
         }
+    }
+    if debug {
+        eprintln!(
+            "debug: find_candidate_pairs: beats={} min_dur={} max_dur={} note_fail={} loud_fail={} candidates={} max_note_dist={:.4} min_deviation={:.4}",
+            beats.len(), min_loop_duration, max_loop_duration,
+            note_fail, loud_fail, out.len(), max_note_dist, min_deviation
+        );
     }
     out
 }
