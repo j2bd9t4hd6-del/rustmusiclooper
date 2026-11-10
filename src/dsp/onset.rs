@@ -1,18 +1,15 @@
-//! Simplified onset strength + beat detection.
+//! Onset strength + beat detection matching librosa's spectral flux.
 //!
-//! This is the *simplified* path approved in place of librosa's full
-//! `onset_strength` (local-max ref filter) + `beat_track` (DTW) + `plp`.
+//! `onset_strength` computes the spectral-flux onset envelope:
+//!     env[t] = mean_f max(0, S[f,t] - S[f,t-1])
+//! matching librosa's `onset_strength(S=mel_spectrogram)` with default
+//! `aggregate=np.mean` and `max_size=1` (no local-max reference filter).
 //!
-//! We compute a spectral-flux onset envelope:
-//!     env[t] = max(0, M[t] - M[t-1]) aggregated over frequency by the median
-//! (matching pymusiclooper's `onset_strength(S=mel_spectrogram)` whose default
-//! aggregation is the median).
-//!
-//! Beats are then the local maxima of the envelope that exceed a threshold
-//! (median + 0.5*std), with a minimum inter-beat gap derived from an estimated
-//! tempo. The resulting beat set feeds the candidate-pair search in analysis.
+//! Beat detection is done via `beat_track` (dynamic programming, Ellis 2007)
+//! in `crate::dsp::beat_track`. The legacy `detect_beats` below is retained
+//! for reference but is no longer used by the analysis pipeline.
 
-/// Spectral-flux onset envelope: `env[t] = median_f max(0, S[f,t]-S[f,t-1])`.
+/// Spectral-flux onset envelope: `env[t] = mean_f max(0, S[f,t]-S[f,t-1])`.
 pub fn onset_strength(mel: &[f32], n_mels: usize, n_frames: usize) -> Vec<f32> {
     let mut env = vec![0.0f32; n_frames];
     for t in 0..n_frames {
@@ -20,29 +17,15 @@ pub fn onset_strength(mel: &[f32], n_mels: usize, n_frames: usize) -> Vec<f32> {
             env[0] = 0.0;
             continue;
         }
-        let mut diffs = Vec::with_capacity(n_mels);
+        let mut sum = 0.0f32;
         for m in 0..n_mels {
             let cur = mel[m * n_frames + t];
             let prev = mel[m * n_frames + t - 1];
-            diffs.push((cur - prev).max(0.0));
+            sum += (cur - prev).max(0.0);
         }
-        env[t] = median(&diffs);
+        env[t] = sum / n_mels as f32;
     }
     env
-}
-
-fn median(v: &[f32]) -> f32 {
-    let mut s = v.to_vec();
-    s.sort_by(|a, b| a.total_cmp(b));
-    let n = s.len();
-    if n == 0 {
-        return 0.0;
-    }
-    if n % 2 == 1 {
-        s[n / 2]
-    } else {
-        (s[n / 2 - 1] + s[n / 2]) * 0.5
-    }
 }
 
 fn mean_std(v: &[f32]) -> (f32, f32) {
