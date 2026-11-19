@@ -9,21 +9,36 @@
 //! in `crate::dsp::beat_track`. The legacy `detect_beats` below is retained
 //! for reference but is no longer used by the analysis pipeline.
 
-/// Spectral-flux onset envelope: `env[t] = mean_f max(0, S[f,t]-S[f,t-1])`.
-pub fn onset_strength(mel: &[f32], n_mels: usize, n_frames: usize) -> Vec<f32> {
-    let mut env = vec![0.0f32; n_frames];
-    for t in 0..n_frames {
-        if t == 0 {
-            env[0] = 0.0;
-            continue;
-        }
-        let mut sum = 0.0f32;
+/// Spectral-flux onset envelope matching `librosa.onset.onset_strength(S, center=True)`.
+///
+/// librosa computes `S[..., lag:] - ref[..., :-lag]` then pads the left with
+/// `lag + n_fft // (2 * hop_length)` zeros (when center=True). With default
+/// `lag=1`, `max_size=1` (ref=S), the flux is `max(0, S[t] - S[t-1])` for
+/// t >= 1, and the result is left-padded by `1 + n_fft // (2*hop)` frames.
+pub fn onset_strength(mel: &[f32], n_mels: usize, n_frames: usize, n_fft: usize, hop_length: usize) -> Vec<f32> {
+    let lag = 1;
+    let pad = lag + n_fft / (2 * hop_length);
+
+    // Flux for t = lag..n_frames: max(0, S[t] - S[t-1])
+    let mut flux = vec![0.0f32; n_frames - lag];
+    for t in 0..n_frames - lag {
+        let mut sum = 0.0f64;
         for m in 0..n_mels {
-            let cur = mel[m * n_frames + t];
-            let prev = mel[m * n_frames + t - 1];
+            let cur = mel[m * n_frames + (t + lag)] as f64;
+            let prev = mel[m * n_frames + t] as f64;
             sum += (cur - prev).max(0.0);
         }
-        env[t] = sum / n_mels as f32;
+        flux[t] = (sum / n_mels as f64) as f32;
+    }
+
+    // Left-pad with `pad` zeros, then trim to n_frames (matching librosa).
+    let total = (pad + (n_frames - lag)).min(n_frames);
+    let mut env = vec![0.0f32; total];
+    for t in 0..n_frames - lag {
+        let idx = pad + t;
+        if idx < total {
+            env[idx] = flux[t];
+        }
     }
     env
 }

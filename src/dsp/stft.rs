@@ -13,12 +13,12 @@
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex;
 
-/// Result of an STFT: `spectrum[f][t]`, complex64, `n_fft/2+1` frequency bins.
+/// Result of an STFT: `spectrum[f][t]`, complex128, `n_fft/2+1` frequency bins.
 pub struct StftOutput {
     pub n_fft: usize,
     pub hop_length: usize,
     /// `[n_fft/2 + 1][n_frames]`
-    pub data: Vec<rustfft::num_complex::Complex<f32>>,
+    pub data: Vec<rustfft::num_complex::Complex<f64>>,
     pub n_frames: usize,
 }
 
@@ -26,29 +26,43 @@ pub fn stft_centered(y: &[f32], n_fft: usize, hop_length: usize, window: &[f32])
     debug_assert_eq!(window.len(), n_fft);
     let n = y.len();
     let n_bins = n_fft / 2 + 1;
-    let n_frames = (n + n_fft) / hop_length + 1;
+    // librosa center=True: pads n_fft//2 each side, frames start at -n_fft//2.
+    // n_frames = n // hop_length + 1 (matching librosa.stft).
+    let n_frames = n / hop_length + 1;
 
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(n_fft);
 
-    let mut spectrum = vec![rustfft::num_complex::Complex::new(0.0f32, 0.0f32); n_bins * n_frames];
+    let mut spectrum = vec![rustfft::num_complex::Complex::new(0.0f64, 0.0f64); n_bins * n_frames];
 
-    for (t, frame_start) in (0..n_frames).map(|t| t * hop_length).enumerate() {
-        // Gather the frame with zero padding, then apply the window.
-        let mut buf: Vec<rustfft::num_complex::Complex<f32>> = vec![
-            rustfft::num_complex::Complex::new(0.0f32, 0.0f32);
+    // librosa center=True: pad n_fft//2 zeros on each side, then frame from 0.
+    // padded = [0; n_fft//2, y, 0; n_fft//2]
+    // frame t starts at t * hop_length in the padded signal.
+    // padded_idx = t * hop + i, maps to y[padded_idx - n_fft//2].
+    let pad = n_fft / 2;
+    for t in 0..n_frames {
+        let mut frame_buf: Vec<rustfft::num_complex::Complex<f64>> = vec![
+            rustfft::num_complex::Complex::new(0.0f64, 0.0f64);
             n_fft
         ];
         for i in 0..n_fft {
-            let idx = frame_start + i;
-            let sample = if idx < n { y[idx] } else { 0.0 };
-            buf[i] = rustfft::num_complex::Complex::new(sample * window[i], 0.0);
+            let padded_idx = t * hop_length + i;
+            // padded signal: [0; pad, y, 0; pad]
+            // padded_idx < pad -> zero (before signal starts)
+            // padded_idx >= pad + n -> zero (after signal ends)
+            let sample = if padded_idx >= pad && padded_idx < pad + n {
+                y[padded_idx - pad] as f64
+            } else {
+                0.0
+            };
+            frame_buf[i] = rustfft::num_complex::Complex::new(sample * window[i] as f64, 0.0);
         }
-        fft.process(&mut buf);
 
-        let base = t * n_bins;
+        fft.process(&mut frame_buf);
+
+        // Store as [n_bins][n_frames] (bin-major), matching librosa's S_power layout.
         for f in 0..n_bins {
-            spectrum[base + f] = buf[f];
+            spectrum[f * n_frames + t] = frame_buf[f];
         }
     }
 
@@ -66,7 +80,7 @@ pub fn power_from_stft(stft: &StftOutput) -> Vec<f32> {
     let n_bins = stft.n_fft / 2 + 1;
     let mut power = vec![0.0f32; n_bins * stft.n_frames];
     for (i, c) in stft.data.iter().enumerate() {
-        power[i] = c.re * c.re + c.im * c.im;
+        power[i] = (c.re * c.re + c.im * c.im) as f32;
     }
     power
 }

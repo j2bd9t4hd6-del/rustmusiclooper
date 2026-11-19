@@ -73,11 +73,13 @@ pub fn a_weighting(freqs: &[f64]) -> Vec<f64> {
 /// `power` must be `[n_fft/2+1][n_frames]` row-major.
 pub fn perceptual_weighting_peak(power: &mut [f32], n_bins: usize, freqs: &[f64]) {
     let offset = a_weighting(freqs);
-    // Convert to dB with peak reference (ref=1.0), then add the A-weighting offset.
+    // Convert to dB with ref=1.0, then add the A-weighting offset.
+    // power is [n_bins][n_frames] (bin-major).
     power_to_db_ref_peak(power);
-    for t in 0..power.len() / n_bins {
+    let n_frames = power.len() / n_bins;
+    for t in 0..n_frames {
         for f in 0..n_bins {
-            power[t * n_bins + f] += offset[f] as f32;
+            power[f * n_frames + t] += offset[f] as f32;
         }
     }
 }

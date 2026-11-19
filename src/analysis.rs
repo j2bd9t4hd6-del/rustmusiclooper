@@ -126,7 +126,7 @@ pub fn find_loop_pairs(audio: &AudioData, params: &Params) -> Vec<LoopPairRespon
         bpm = 120.0;
         (0..n_frames).collect()
     } else {
-        let env = onset_strength(&mel_spec, N_MELS, n_frames);
+        let env = onset_strength(&mel_spec, N_MELS, n_frames, N_FFT, HOP_LENGTH);
         bpm = tempo::estimate_tempo(&env, rate as f32, HOP_LENGTH);
         let beats_dp = beat_track::beat_track(&env, rate as f32, HOP_LENGTH, bpm);
         let n_dp = beats_dp.len();

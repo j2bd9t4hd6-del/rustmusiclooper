@@ -114,11 +114,11 @@ pub fn chroma_stft(
     let mut raw = vec![0.0f32; n_chroma * n_frames];
     for t in 0..n_frames {
         for c in 0..n_chroma {
-            let mut acc = 0.0f32;
+            let mut acc = 0.0f64;
             for f in 0..n_bins {
-                acc += fb[c * n_bins + f] * power[t * n_bins + f];
+                acc += fb[c * n_bins + f] as f64 * power[f * n_frames + t] as f64;
             }
-            raw[c * n_frames + t] = acc;
+            raw[c * n_frames + t] = acc as f32;
         }
     }
     // l-inf normalize per frame (column)
